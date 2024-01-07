@@ -384,37 +384,27 @@ class my_yolo(nn.Module):
 
     neck_outputs = self.neck(x)
 
-    y_pred1 = self.heads["head_1"](
+    output_dict["head_1"] = self.heads["head_1"](
         neck_outputs["ConvBNSiLU_0"],
         neck_outputs["bottleneck_0"]
     )
 
-    output_dict["head_1"] = y_pred1
-
-    y_pred2 = self.heads["head_2"](
+    output_dict["head_2"] = self.heads["head_2"](
         neck_outputs["ConvBNSiLU_1"],
         neck_outputs["bottleneck_1"]
-    )
+    )    
 
-    output_dict["head_2"] = y_pred2
+    output_dict["head_3"] = self.heads["head_3"](x)
 
-    y_pred3 = self.heads["head_3"](x)
-
-    output_dict["head_3"] = y_pred3
-
-    y_pred4 = self.heads["head_4"](
+    output_dict["head_4"] = self.heads["head_4"](
         neck_outputs["bottleneck_0"],
         neck_outputs["bottleneck_1"]
     )
 
-    output_dict["head_4"] = y_pred4
-
-    y_pred5 = self.heads["head_5"](
+    output_dict["head_5"] = self.heads["head_5"](
         x,
         neck_outputs["bottleneck_0"]
     )
-
-    output_dict["head_5"] = y_pred5
 
     return output_dict
 
