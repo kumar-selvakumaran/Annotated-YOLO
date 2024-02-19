@@ -20,8 +20,9 @@ from torchvision.ops import box_iou
 
 import nvidia_smi
 
-nvidia_smi.nvmlInit()
-deviceCount = nvidia_smi.nvmlDeviceGetCount()
+if torch.cuda.is_available():
+  nvidia_smi.nvmlInit()
+  deviceCount = nvidia_smi.nvmlDeviceGetCount()
 
 def print_gpu_usage():
   for i in range(deviceCount):
@@ -96,16 +97,19 @@ class bottleneck(nn.Module):
                ):
     super(bottleneck, self).__init__()
 
+    self.downsample = downsample
     self.num_1x1_filters_per_rep = num_1x1_filters_per_rep
     self.num_3x3_filters_per_rep = num_3x3_filters_per_rep
+    self.pooler = nn.AvgPool2d(3, stride=1, padding = 0)
     self.num_reps = num_reps
+  
 
     layer_block = nn.ModuleList()
 
     if block_number == None:
         block_number = "NA"
 
-    if downsample:
+    if self.downsample:
       padding_3x3 = 0
     else:
       padding_3x3 = 1
@@ -145,7 +149,14 @@ class bottleneck(nn.Module):
         x = layer(x)
         init_layer = False
       else:
-        x = layer(x) + x
+        if self.downsample:
+          # print(f"pooled")
+          # print(f"in shape : {x.shape}")
+          x = layer(x) + self.pooler(x)
+          # print(f"out shape : {x.shape}")
+        else:
+          x = layer(x) + x
+        
 
     return x
 
@@ -161,7 +172,7 @@ class backbone(nn.Module):
     self.super_block["input_layer"] = normed_Conv2d(
         in_channels = 3,
         out_channels = 32,
-        kernel_size = 3
+        kernel_size = 3,
     )
     ############################################
 
@@ -189,7 +200,7 @@ class backbone(nn.Module):
         num_3x3_filters_per_rep = 64,
         num_reps = 2,
         block_number = 0,
-        downsample = False,
+        downsample = True,
     )
 
     self.super_block["ConvBSSiLU_2"] = normed_Conv2d(
@@ -206,7 +217,7 @@ class backbone(nn.Module):
         num_3x3_filters_per_rep = 128,
         num_reps = 6,
         block_number = 1,
-        downsample = False
+        downsample = True
     )
 
     self.super_block["ConvBNSiLU_3"] = normed_Conv2d(
@@ -223,7 +234,7 @@ class backbone(nn.Module):
         num_3x3_filters_per_rep = 256,
         num_reps = 8,
         block_number = 2,
-        downsample = False
+        downsample = True
 
     )
 
@@ -241,7 +252,7 @@ class backbone(nn.Module):
         num_3x3_filters_per_rep = 512,
         num_reps = 8,
         block_number = 3,
-        downsample = False
+        downsample = True
     )
     ##########################################
 
@@ -279,7 +290,7 @@ class neck(nn.Module):
                                num_1x1_filters_per_rep = 512,
                                num_3x3_filters_per_rep = 1024,
                                num_reps = 4,
-                               block_number = 0
+                               block_number = 0,
                            ))
 
     self.layers.add_module( name = "ConvBNSiLU_1",
@@ -297,7 +308,7 @@ class neck(nn.Module):
                                num_1x1_filters_per_rep = 256,
                                num_3x3_filters_per_rep = 512,
                                num_reps = 4,
-                               block_number = 1
+                               block_number = 1,
                            ))
 
   def forward(self, x):
@@ -308,6 +319,7 @@ class neck(nn.Module):
       print(f"completed neck forward pass \n")
       print_mem_usage()
       ###################
+
       x = layer(x)
       self.outputs[name] = x
 
@@ -457,8 +469,8 @@ class my_yolo(nn.Module):
         neck_outputs["ConvBNSiLU_1"],
         neck_outputs["bottleneck_1"]
     )    
-# 
-    output_dict["head_3"] = self.heads["head_3"](x)
+
+    output_dict["head_3"] = self.heads["head_3"](neck_outputs["bottleneck_1"])
 
     output_dict["head_4"] = self.heads["head_4"](
         neck_outputs["bottleneck_0"],
