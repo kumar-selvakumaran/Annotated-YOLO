@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 import numpy as np
 
 def printGridDets(x,y, numGrids):
@@ -30,8 +31,6 @@ def printGridDets(x,y, numGrids):
     gridColTemp = gridCol
     print(f"other valid : 2d : {(gridRowTemp, gridColTemp)}, 1d : {(gridRowTemp*numGrids) + gridColTemp}\n")
 
-
-
 #______________________________________________________________________________
 ##################3_______  MAKE GRID MEMBERSHIPS ______________################
 ##########  MULTI MEMBERSHIP AS SEEN IN : https://github.com/ultralytics/yolov5/issues/6998#44 
@@ -53,10 +52,11 @@ accessing memberships while "building targets" : boxes[boxes[:, 4] == reqPos1d]
 
 """
 
+
 """
-- init numBoxes*3 array 'Aall'. assuming 1 + 2 border valid.
-- init array with possibly valid poses (may exceed image dims) and 
-  keep poses within the image alone, 
+- init numBoxes*3 array 'Aall'. assuming iteself + up/down + left/right border valid.
+- init array with possibly valid poses (may exceed image dims) and
+  keep poses within the image alone,
 - use the above mask to select only the valid boxes from 'Aall'.
 - This will be final set of membership boxes accessed by build Targets.
 
@@ -131,3 +131,80 @@ def genGridMemberships(currCoords : torch.tensor,
     print(f"memBoxes duplications : {memBoxes[numBoxes:]}")
 
   return memBoxes
+
+def matchAnchors(predBoxes, anchors, thresh):
+  numAnchors = len(anchors)
+  numPreds = len(predBoxes)
+  print(f"num anchors : {numAnchors}, num boxes : {numPreds}")
+  whAnchors = anchors[:, 2:]
+  whPredBoxes = predBoxes[:, 2:]
+
+  ratioW = whAnchors.tile(numPreds)[:,::2].T / whPredBoxes.tile(numAnchors)[:,::2]
+  ratioH = whAnchors.tile(numPreds)[:,1::2].T / whPredBoxes.tile(numAnchors)[:,1::2]
+
+  ratioWMax = torch.max(ratioW, 1 / ratioW)
+  ratioHMax = torch.max(ratioH, 1 / ratioH)
+  ratioMax = torch.max(ratioWMax, ratioHMax)
+  # anchorMask = ratioMax < thresh
+  return ratioMax
+
+def buildTargets(currCoords,
+                 imWidth,
+                 imHeight,
+                 numGrids,
+                 classes,
+                 anchorBoxes):
+                 
+  totalNumGrids = numGrids * numGrids
+  numAnchors = len(anchorBoxes)
+  numBoxes = len(currCoords)
+
+  currCoords = torch.concat([currCoords, classes[..., None]], 1)
+
+  # Obtaining a getting the boxes with valid Grid memberships.
+  # shape : numBoxes*3 x 6 
+  memBoxes =  genGridMemberships(currCoords, imHeight, imWidth, numGrids, False)
+
+  # getting anchor memberships after computing the defining ratio : 
+  # shape : numBoxes*3 x 4
+  ratioMax = matchAnchors(memBoxes[:,:4], torch.tensor(anchorBoxes), 4)
+
+  boxInds, anchorInds = torch.meshgrid(torch.arange(ratioMax.shape[0]),
+                                  torch.arange(ratioMax.shape[1]),
+                                  indexing='ij')
+
+  memInds = memBoxes[boxInds.flatten()][:,-1].to(torch.int)
+
+  boxesToLoad = memBoxes[boxInds.flatten()][:,:5]
+
+  # converting the defining ratio and the grid membership Boxes tensor to 
+  # shape : numGrids x numAnchors x numBoxes 
+  targetInds = torch.ones(totalNumGrids, numAnchors, numBoxes) * np.inf
+  
+  targets = torch.ones(totalNumGrids, numAnchors, numBoxes, 5) * np.inf
+
+  tailTracker = np.zeros(targets.shape[:2]).astype(int)
+  memTailInds = []
+  for memInd, AnchorInd in zip(memInds.tolist(),
+                              anchorInds.flatten().to(torch.int).tolist()):
+    memTailInds.append(tailTracker[memInd, AnchorInd])
+    tailTracker[memInd, AnchorInd] +=1
+
+  targetInds[memInds, anchorInds.flatten(), memTailInds] = ratioMax.flatten()
+  
+  #loading boxes into the targets tensor
+  targets[memInds, anchorInds.flatten(), memTailInds, :] = boxesToLoad
+
+  gridInds, anchorInds = torch.meshgrid(torch.arange(totalNumGrids),
+                                  torch.arange(numAnchors),
+                                  indexing='ij')
+
+  finalTargets = torch.zeros([totalNumGrids, numAnchors, 5])
+
+  # Making a tensor with the box with the closest ratio to each anchor box 
+  # for each grid
+  finalTargets[gridInds.flatten(), anchorInds.flatten()] = targets[gridInds.flatten(),
+                                                                    anchorInds.flatten(),
+                                                                    torch.argmin(targetInds, 2).flatten()]
+  return finalTargets, targets, targetInds
+
