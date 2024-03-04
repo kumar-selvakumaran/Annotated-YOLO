@@ -71,7 +71,7 @@ def genGridMemberships(currCoords : torch.tensor,
 
   gridLenW = imWidth//numGrids
   gridLenH = imHeight//numGrids
-  
+
   gridRow = currCoords[:, 1] // gridLenH
   gridCol = currCoords[:, 0] // gridLenW
 
@@ -84,44 +84,44 @@ def genGridMemberships(currCoords : torch.tensor,
   gridY = currCoords[:, 1] - gridRow * gridLenH
 
   numBoxes, _ = currCoords.shape
-  memBoxes = torch.zeros(tuple([numBoxes*3, 5]))
+  memBoxes = torch.zeros(tuple([numBoxes*3, 6]))
   validMems2d = torch.ones(tuple([numBoxes*3, 2])) * -1
 
   validMems2d[insertInd:numBoxes] = mems2d
-  memBoxes[insertInd:numBoxes, :4]  = currCoords
+  memBoxes[insertInd:numBoxes, :5]  = currCoords
   insertInd += numBoxes
 
   tempMask = torch.logical_and(gridX < 0.5*gridLenW, mems2d[:, 1] - 1 > -1)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 1] -= 1
-  memBoxes[insertInd:insertInd+numTemp, :4]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
   insertInd += numTemp
 
   tempMask = torch.logical_and(gridX > 0.5*gridLenW, mems2d[:, 1] + 1 < numGrids)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 1] += 1
-  memBoxes[insertInd:insertInd+numTemp, :4]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
   insertInd += numTemp
 
   tempMask = torch.logical_and(gridY < 0.5*gridLenH, mems2d[:, 0] - 1 > -1)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 0] -= 1
-  memBoxes[insertInd:insertInd+numTemp, :4]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
   insertInd += numTemp
 
   tempMask = torch.logical_and(gridY > 0.5*gridLenH, mems2d[:, 0] + 1 < numGrids)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 0] += 1
-  memBoxes[insertInd:insertInd+numTemp, :4]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
   insertInd += numTemp
 
   memBoxes = memBoxes[validMems2d[:,0] != -1]
   validMems2d = validMems2d[validMems2d[:,0] != -1]
-  memBoxes[:,4] = validMems2d[:,0]*numGrids + validMems2d[:,1]
+  memBoxes[:,5] = validMems2d[:,0]*numGrids + validMems2d[:,1]
 
   if verbose == True:
     print(f"currCoords : {currCoords.shape}")
