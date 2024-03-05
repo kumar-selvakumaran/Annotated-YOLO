@@ -62,6 +62,30 @@ accessing memberships while "building targets" : boxes[boxes[:, 4] == reqPos1d]
 
   SUPPORTS ONLY SINGLE IMAGE AT A TIME, NOT BATCHED.
 """
+
+"""
+creates a [eps, eps, 1-eps, eps ...] class Label vector with length nC (numClasses)
+1-eps value's position corresponds to the class label's position. typically, eps
+should be close to 0, when epsilon = 0, there is no label smooth and the result
+is just oneHot Encording.  
+
+takes input (currCoords) of the format : 
+  [numBoxes x 5(xywh + classLabel)]
+
+returns labels of the format:
+  [numBoxes x 15(11classes + 4 (xywh))]
+"""
+def genSmoothenedLabels(currCoords,
+               epsilon):
+  gtMask = nn.functional.one_hot(currCoords[:,-1].to(int))
+  labels = (gtMask - epsilon) + ((1- gtMask) * 2 * epsilon)
+  currCoords = torch.concat([labels, currCoords[:, :-1]], 1)
+  return currCoords
+
+"""
+takes input (currCoords) of the format : 
+  [numBoxes x 5(xywh + classLabel)]
+"""
 def genGridMemberships(currCoords : torch.tensor,
                    imHeight : int,
                    imWidth : int,
@@ -69,64 +93,66 @@ def genGridMemberships(currCoords : torch.tensor,
                    verbose : bool):
   insertInd = 0
 
+  currCoords = genSmoothenedLabels(currCoords, 0.1)
+
   gridLenW = imWidth//numGrids
   gridLenH = imHeight//numGrids
 
-  gridRow = currCoords[:, 1] // gridLenH
-  gridCol = currCoords[:, 0] // gridLenW
+  gridRow = currCoords[:, -1] // gridLenH
+  gridCol = currCoords[:, -2] // gridLenW
 
 
   mems1d = gridRow * numGrids + gridCol
   mems2d = torch.concat([gridRow[..., None], gridCol[..., None]],1)
 
 
-  gridX = currCoords[:, 0] - gridCol * gridLenW
-  gridY = currCoords[:, 1] - gridRow * gridLenH
+  gridX = currCoords[:, -4] - gridCol * gridLenW
+  gridY = currCoords[:, -3] - gridRow * gridLenH
 
   numBoxes, _ = currCoords.shape
-  memBoxes = torch.zeros(tuple([numBoxes*3, 6]))
+  memBoxes = torch.zeros(tuple([numBoxes*3, 16]))
   validMems2d = torch.ones(tuple([numBoxes*3, 2])) * -1
 
   validMems2d[insertInd:numBoxes] = mems2d
-  memBoxes[insertInd:numBoxes, :5]  = currCoords
+  memBoxes[insertInd:numBoxes, :-1]  = currCoords
   insertInd += numBoxes
 
   tempMask = torch.logical_and(gridX < 0.5*gridLenW, mems2d[:, 1] - 1 > -1)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 1] -= 1
-  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :-1]  = currCoords[tempMask]
   insertInd += numTemp
 
   tempMask = torch.logical_and(gridX > 0.5*gridLenW, mems2d[:, 1] + 1 < numGrids)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 1] += 1
-  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :-1]  = currCoords[tempMask]
   insertInd += numTemp
 
   tempMask = torch.logical_and(gridY < 0.5*gridLenH, mems2d[:, 0] - 1 > -1)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 0] -= 1
-  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :-1]  = currCoords[tempMask]
   insertInd += numTemp
 
   tempMask = torch.logical_and(gridY > 0.5*gridLenH, mems2d[:, 0] + 1 < numGrids)
   numTemp = len(torch.nonzero(tempMask))
   validMems2d[insertInd:insertInd+numTemp] = mems2d[tempMask]
   validMems2d[insertInd:insertInd+numTemp, 0] += 1
-  memBoxes[insertInd:insertInd+numTemp, :5]  = currCoords[tempMask]
+  memBoxes[insertInd:insertInd+numTemp, :-1]  = currCoords[tempMask]
   insertInd += numTemp
 
   memBoxes = memBoxes[validMems2d[:,0] != -1]
   validMems2d = validMems2d[validMems2d[:,0] != -1]
-  memBoxes[:,5] = validMems2d[:,0]*numGrids + validMems2d[:,1]
+  memBoxes[:,-1] = validMems2d[:,0]*numGrids + validMems2d[:,1]
 
   if verbose == True:
     print(f"currCoords : {currCoords.shape}")
     for i in currCoords:
-      printGridDets(i[0].item(),i[1].item(),numGrids)
+      printGridDets(i[0].item(),i[1].item(),numGrids)#REMOVE TRAIN UTILS FROM THIS LINE.
     print(f"grid row length : {gridLenH}, grid col length : {gridLenW}")
     print(f"memBoxes duplications : {memBoxes[numBoxes:]}")
 
@@ -163,11 +189,18 @@ def buildTargets(currCoords,
 
   # Obtaining a getting the boxes with valid Grid memberships.
   # shape : numBoxes*3 x 6 
+  """
+  include class probabilities as well as it is used in label smothing,
+  and class loss computation. that is now the struture will be:
+
+  numBoxes*3 x (numClasses + 4(xywh) + 1(membership) 
+
+  """
   memBoxes =  genGridMemberships(currCoords, imHeight, imWidth, numGrids, False)
 
   # getting anchor memberships after computing the defining ratio : 
   # shape : numBoxes*3 x 4
-  ratioMax = matchAnchors(memBoxes[:,:4], torch.tensor(anchorBoxes), 4)
+  ratioMax = matchAnchors(memBoxes[:,-4:], torch.tensor(anchorBoxes), 4)
 
   boxInds, anchorInds = torch.meshgrid(torch.arange(ratioMax.shape[0]),
                                   torch.arange(ratioMax.shape[1]),
@@ -175,13 +208,13 @@ def buildTargets(currCoords,
 
   memInds = memBoxes[boxInds.flatten()][:,-1].to(torch.int)
 
-  boxesToLoad = memBoxes[boxInds.flatten()][:,:5]
+  boxesToLoad = memBoxes[boxInds.flatten()][:,:-1]
 
   # converting the defining ratio and the grid membership Boxes tensor to 
   # shape : numGrids x numAnchors x numBoxes 
   targetInds = torch.ones(totalNumGrids, numAnchors, numBoxes) * np.inf
-  
-  targets = torch.ones(totalNumGrids, numAnchors, numBoxes, 5) * np.inf
+
+  targets = torch.ones(totalNumGrids, numAnchors, numBoxes, 15) * np.inf
 
   tailTracker = np.zeros(targets.shape[:2]).astype(int)
   memTailInds = []
@@ -191,15 +224,15 @@ def buildTargets(currCoords,
     tailTracker[memInd, AnchorInd] +=1
 
   targetInds[memInds, anchorInds.flatten(), memTailInds] = ratioMax.flatten()
-  
+
   #loading boxes into the targets tensor
-  targets[memInds, anchorInds.flatten(), memTailInds, :] = boxesToLoad
+  targets[memInds, anchorInds.flatten(), memTailInds] = boxesToLoad
 
   gridInds, anchorInds = torch.meshgrid(torch.arange(totalNumGrids),
                                   torch.arange(numAnchors),
                                   indexing='ij')
 
-  finalTargets = torch.zeros([totalNumGrids, numAnchors, 5])
+  finalTargets = torch.zeros([totalNumGrids, numAnchors, 15])
 
   # Making a tensor with the box with the closest ratio to each anchor box 
   # for each grid
@@ -207,4 +240,5 @@ def buildTargets(currCoords,
                                                                     anchorInds.flatten(),
                                                                     torch.argmin(targetInds, 2).flatten()]
   return finalTargets, targets, targetInds
+
 
