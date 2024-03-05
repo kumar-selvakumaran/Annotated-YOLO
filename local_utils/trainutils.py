@@ -31,11 +31,72 @@ def printGridDets(x,y, numGrids):
     gridColTemp = gridCol
     print(f"other valid : 2d : {(gridRowTemp, gridColTemp)}, 1d : {(gridRowTemp*numGrids) + gridColTemp}\n")
 
-#______________________________________________________________________________
-##################3_______  MAKE GRID MEMBERSHIPS ______________################
-##########  MULTI MEMBERSHIP AS SEEN IN : https://github.com/ultralytics/yolov5/issues/6998#44 
-#______________________________________________________________________________
+#_______________________________________________________________________________
+#XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+#                    P R E D S    F O R M A T T I N G
+#XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 """
+FORMATTING POSITS (preds)
+
+STRUCTURE:
+
+[Pclass1, Pclass2, Pclass3.... Pclass11, Conf, x, y, w, h] //NOT YET, SHOULD DO THE REGRESSION NORMALIZATION
+"""
+def formatPredsForLossComp(preds):
+  positSize, numGrids, _ = preds.shape
+  numClasses = 11
+  predSize = numClasses + 5
+  predInds = list(range(0, positSize, predSize))
+  preds = preds.flatten(-2,-1)
+  anchPreds = torch.stack(list(torch.tensor_split(preds, predInds, dim = 0)[1:]))#.shape
+  
+  out = anchPreds.permute(2, 0, 1)
+  return out
+
+"""
+implementing posits to boxes based on https://docs.ultralytics.com/yolov5/tutorials/architecture_description/#43-eliminate-grid-sensitivity
+but making boxes in IMAGE COORDINATES UNLIKE OG IMPLEMENTATION. check why they didnt use image coordinates and get back.
+"""
+def positsToBBoxes(posits,
+                   imWidth,
+                   imHeight,
+                   anchorBoxes):
+  totalNumGrids, numAnchors, predSize = posits.shape
+  numGrids = totalNumGrids ** (1/2)
+  gridWidth = imWidth / numGrids
+  gridHeight = imHeight / numGrids
+
+  vertGridInds, horGridInds = torch.meshgrid(torch.arange(numGrids), torch.arange(numGrids))
+  vertGridInds, horGridInds = vertGridInds.flatten(), horGridInds.flatten()
+
+  #posits to bbox coordinates(x) (image (pixels))
+  posits[:,:,-4] = (((2 * torch.sigmoid(posits[:,:,-4])) - 0.5) * gridWidth) #scaling
+  posits[:,:,-4] += (gridWidth * horGridInds[None, ...].tile(numAnchors,1).T) #global positioning
+
+  #posits to bbox coordinates(y) (image (pixesls))
+  posits[:, :, -3] = (((2 * torch.sigmoid(posits[:, :, -3])) - 0.5) * gridHeight) #scaling
+  posits[:, :, -3] += (gridHeight * vertGridInds[None, ...].tile(numAnchors,1).T) #global positioning
+
+  #posits to bbox coordinates(wh) (image (pixesls))
+  posits[:, :, -2:] = anchorBoxes[:, -2:] * ( 2 * torch.sigmoid(posits[:, :, -2:] ) **2) 
+  return posits
+
+#XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+#_______________________________________________________________________________
+
+
+
+
+#_______________________________________________________________________________
+#XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+                #   B U I L D I N G   T A R G E T S
+#xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                
+#______________________________________________________________________________
+
+"""_______  MAKE GRID MEMBERSHIPS ______________################
+ MULTI MEMBERSHIP AS SEEN IN : https://github.com/ultralytics/yolov5/issues/6998#44 
+______________________________________________________________________________
+
 STRUCTURE :  
 let pos = membership flattened index. i.e , if image into 2x2 grids.
 [[1, 2][3, 4]] would be the indices of the grids, (row major).
@@ -241,4 +302,5 @@ def buildTargets(currCoords,
                                                                     torch.argmin(targetInds, 2).flatten()]
   return finalTargets, targets, targetInds
 
-
+#XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+#_______________________________________________________________________________

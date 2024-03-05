@@ -1,11 +1,17 @@
 import os
 import torch
+from torch import nn
 import numpy as np
 import random
 import shutil
 from IPython.display import Image as im
 from IPython.display import display as dis
 import cv2
+
+def print_pars(model):
+  named_pars = tuple(model.named_parameters())
+  for ind, i in enumerate(named_pars):
+    print(f"{i[0]} parameters : {i[1][0]} | gradients : {i[1].grad}")
 
 def getFullPaths(fileDir, fileNames):
   fullPaths = []
@@ -30,6 +36,30 @@ def getDataPaths():
   labelPaths = getFullPaths(labelDir, labelPaths)
 
   return imPaths, labelPaths
+
+def resizeWithAspectRatio(tempim, maxSize):
+  if tempim.shape[0] == tempim.shape[1]:
+    tempim = cv2.resize(tempim, (maxSize, maxSize))
+    return tempim
+  dims = np.array(tempim.shape[:2])
+  minMaxRatio = min(dims) / max(dims)
+  newDims = [0,0]
+  newDims[np.argmax(dims)] = maxSize
+  newDims[np.argmin(dims)] = int(round(minMaxRatio * maxSize))
+  print(int(round(minMaxRatio * maxSize)))
+  tempim = cv2.resize(tempim, newDims[::-1])
+  return tempim
+
+
+def MakeSquareBlackEdge(tempim, maxSize):
+  retIm = np.zeros([maxSize, maxSize, 3])
+  dims = np.array(tempim.shape[:2])
+  imageSlice = np.zeros([2,2])
+  imageSlice[:,0] = (max(dims) - dims)/2
+  imageSlice[:,1] = max(dims) - imageSlice[:,0]
+  imageSlice = imageSlice.astype(int)
+  retIm[imageSlice[0, 0]:imageSlice[0, 1], imageSlice[1, 0]:imageSlice[1,1]] = tempim
+  return retIm
 
 def get_coords(labels, image):
     imh, imw = image.shape[:2]
