@@ -42,9 +42,8 @@ STRUCTURE:
 
 [Pclass1, Pclass2, Pclass3.... Pclass11, Conf, x, y, w, h] //NOT YET, SHOULD DO THE REGRESSION NORMALIZATION
 """
-def formatPredsForLossComp(preds):
+def formatPredsForLossComp(preds, numClasses):
   positSize, numGrids, _ = preds.shape
-  numClasses = 11
   predSize = numClasses + 5
   predInds = list(range(0, positSize, predSize))
   preds = preds.flatten(-2,-1)
@@ -137,8 +136,9 @@ returns labels of the format:
   [numBoxes x 15(11classes + 4 (xywh))]
 """
 def genSmoothenedLabels(currCoords,
-               epsilon):
-  gtMask = nn.functional.one_hot(currCoords[:,-1].to(int))
+                        epsilon,
+                        numClasses):
+  gtMask = nn.functional.one_hot(currCoords[:,-1].to(int), num_classes = numClasses)
   labels = (gtMask - epsilon) + ((1- gtMask) * 2 * epsilon)
   currCoords = torch.concat([labels, currCoords[:, :-1]], 1)
   return currCoords
@@ -148,13 +148,14 @@ takes input (currCoords) of the format :
   [numBoxes x 5(xywh + classLabel)]
 """
 def genGridMemberships(currCoords : torch.tensor,
-                   imHeight : int,
-                   imWidth : int,
-                   numGrids : int,
-                   verbose : bool):
+                       imHeight : int,
+                       imWidth : int,
+                       numGrids : int,
+                       numClasses : int,
+                       verbose : bool):
   insertInd = 0
 
-  currCoords = genSmoothenedLabels(currCoords, 0.1)
+  currCoords = genSmoothenedLabels(currCoords, 0.1, numClasses)
 
   gridLenW = imWidth//numGrids
   gridLenH = imHeight//numGrids
@@ -240,6 +241,7 @@ def buildTargets(currCoords,
                  imHeight,
                  numGrids,
                  classes,
+                 numClasses,
                  anchorBoxes):
                  
   totalNumGrids = numGrids * numGrids
@@ -257,7 +259,12 @@ def buildTargets(currCoords,
   numBoxes*3 x (numClasses + 4(xywh) + 1(membership) 
 
   """
-  memBoxes =  genGridMemberships(currCoords, imHeight, imWidth, numGrids, False)
+  memBoxes =  genGridMemberships(currCoords,
+                                 imHeight,
+                                 imWidth,
+                                 numGrids,
+                                 numClasses,
+                                 False)
 
   # getting anchor memberships after computing the defining ratio : 
   # shape : numBoxes*3 x 4
